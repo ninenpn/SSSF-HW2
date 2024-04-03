@@ -8,25 +8,22 @@
 // - catGet - get cat by id
 // - catListGet - get all cats
 // - catPost - create new cat
-import {Request, Response, NextFunction} from 'express';
+import {NextFunction, Request, Response} from 'express';
 import {Cat} from '../../types/DBTypes';
 import catModel from '../models/catModel';
-import {User} from '../../types/DBTypes';
 import CustomError from '../../classes/CustomError';
+import {MessageResponse} from '../../types/MessageTypes';
 import rectangleBounds from '../../utils/rectangleBounds';
 
 const catGet = async (
-  req: Request<{id: string}>,
+  req: Request<{id: string}, {}, {}>,
   res: Response<Cat>,
   next: NextFunction
 ) => {
   try {
-    const cat = await catModel.findById(req.params.id).populate({
-      path: 'owner',
-      select: '-__v -password -role',
-    });
+    const cat = await catModel.findById(req.params.id).populate('owner');
     if (!cat) {
-      throw new CustomError('Cat not found', 404);
+      throw new CustomError('No cat found', 404);
     }
     res.json(cat);
   } catch (error) {
@@ -40,15 +37,8 @@ const catListGet = async (
   next: NextFunction
 ) => {
   try {
-    const cats = await catModel
-      .find()
-      .populate({
-        path: 'owner',
-        select: '-__v -password -role',
-      })
-      .populate({
-        path: 'location',
-      });
+    const cats = await catModel.find().populate('owner');
+    console.log(cats[0]);
     res.json(cats);
   } catch (error) {
     next(error);
@@ -56,32 +46,36 @@ const catListGet = async (
 };
 
 const catPost = async (
-  req: Request<{}, {}, Omit<Cat, '_id'>>,
-  res: Response,
+  req: Request<{}, {}, Cat>,
+  res: Response<MessageResponse & {data: Cat}>,
   next: NextFunction
 ) => {
   try {
-    if (!req.body.location) {
-      req.body.location = res.locals.coordinates;
-    }
-    req.body.owner = res.locals.user._id;
-    const cat = await catModel.create(req.body);
-    res.json({message: 'Cat created', data: cat});
+    const cat = {
+      ...req.body,
+      owner: res.locals.user._id,
+      location: res.locals.coords,
+    };
+    const response = await catModel.create(cat);
+    res.json({message: 'Cat created', data: response});
   } catch (error) {
     next(error);
   }
 };
 
 const catGetByUser = async (
-  req: Request<{}, {}, User>,
+  req: Request,
   res: Response<Cat[]>,
   next: NextFunction
 ) => {
   try {
-    const cats = await catModel.find({owner: res.locals.user._id}).populate({
-      path: 'owner',
-      select: '-__v -password -role',
-    });
+    if (!res.locals.user) {
+      throw new CustomError('No user', 400);
+    }
+    const cats = await catModel.find({owner: res.locals.user._id});
+    if (!cats[0]) {
+      throw new CustomError('No cats', 400);
+    }
     res.json(cats);
   } catch (error) {
     next(error);
@@ -89,36 +83,26 @@ const catGetByUser = async (
 };
 
 const catGetByBoundingBox = async (
-  req: Request<{}, {}, {}, {topRight: string; bottomLeft: string}>,
+  req: Request,
   res: Response<Cat[]>,
   next: NextFunction
 ) => {
   try {
-    const topRight = req.query.topRight;
-    const bottomLeft = req.query.bottomLeft;
-    const [rightCorner1, rightCorner2] = topRight.split(',');
-    const [leftCorner1, leftCorner2] = bottomLeft.split(',');
-
-    const bounds = rectangleBounds(
-      {
-        lat: Number(rightCorner1),
-        lng: Number(rightCorner2),
-      },
-      {
-        lat: Number(leftCorner1),
-        lng: Number(leftCorner2),
-      }
-    );
-
-    const cats = await catModel
-      .find({
-        location: {
-          $geoWithin: {
-            $geometry: bounds,
-          },
-        },
-      })
-      .select('-__v');
+    const tr = (req.query.topRight as string).split(',');
+    const bl = (req.query.bottomLeft as string).split(',');
+    const topRight = {
+      lat: Number(tr[0]),
+      lng: Number(tr[1]),
+    };
+    const bottomLeft = {
+      lat: Number(bl[0]),
+      lng: Number(bl[1]),
+    };
+    const box = rectangleBounds(topRight, bottomLeft);
+    const cats = await catModel.find().where('location').within(box);
+    if (!cats[0]) {
+      throw new CustomError('No cat found', 404);
+    }
     res.json(cats);
   } catch (error) {
     next(error);
@@ -126,22 +110,22 @@ const catGetByBoundingBox = async (
 };
 
 const catPutAdmin = async (
-  req: Request<{id: string}, {}, Omit<Cat, '__id'>>,
+  req: Request<{id: string}, {}, Cat>,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    if (req.user && (req.user as User).role !== 'admin') {
-      throw new CustomError('Only admin can change cat owner', 403);
+    if (res.locals.user.role !== 'admin') {
+      throw new CustomError('Not authorized', 401);
     }
-    req.body.location = res.locals.coordinates;
-    const cat = await catModel
-      .findByIdAndUpdate(req.params.id, req.body, {new: true})
-      .select('-__v');
-    if (!cat) {
-      throw new CustomError('Cat not found', 404);
+
+    const response = await catModel.findByIdAndUpdate(req.params.id, req.body, {
+      new: true,
+    });
+    if (!response) {
+      throw new CustomError('Cat not found', 400);
     }
-    res.json({message: 'Cat updated', data: cat});
+    res.json({message: 'Cat updated', data: response});
   } catch (error) {
     next(error);
   }
@@ -188,24 +172,29 @@ const catDelete = async (
 };
 
 const catPut = async (
-  req: Request<{id: string}, {}, Omit<Cat, '_id'>>,
+  req: Request<{id: string}, {}, Cat>,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    if (req.user && (req.user as User)._id !== (req.body as Cat).owner) {
-      throw new CustomError('Only admin can change cat owner', 403);
+    if (!res.locals.user._id) {
+      throw new CustomError('No user', 400);
     }
 
-    req.body.location = res.locals.coordinates;
-    const cat = await catModel
-      .findByIdAndUpdate(req.params.id, req.body, {new: true})
-      .select('-__v');
+    const response = await catModel.findOneAndUpdate(
+      {
+        owner: res.locals.user._id,
+        _id: req.params.id,
+      },
+      req.body,
+      {new: true}
+    );
 
-    if (!cat) {
-      throw new CustomError('Cat not found', 404);
+    if (!response) {
+      throw new CustomError('Cat not found', 400);
     }
-    res.json({message: 'Cat updated', data: cat});
+
+    res.json({message: 'Cat updated', data: response});
   } catch (error) {
     next(error);
   }

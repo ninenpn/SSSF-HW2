@@ -54,8 +54,8 @@ router.route('/user').get(authenticate, catGetByUser);
 
 router
   .route('/admin/:id')
-  .put(authenticate, catPutAdmin)
-  .delete(authenticate, catDeleteAdmin);
+  .put(authenticate, param('id'), catPutAdmin)
+  .delete(authenticate, param('id'), catDeleteAdmin);
 
 router
   .route('/:id')

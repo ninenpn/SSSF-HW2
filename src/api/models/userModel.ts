@@ -2,25 +2,21 @@
 import mongoose from 'mongoose';
 import {User} from '../../types/DBTypes';
 
-const userSchema = new mongoose.Schema<User>({
-  user_name: {
-    type: String,
-    minlength: [2, 'Minimum length is 2 characters.'],
-  },
+const Schema = mongoose.Schema;
+
+const userSchema = new Schema<User>({
+  user_name: String,
   email: {
     type: String,
-    required: true,
     unique: true,
+    required: true,
   },
   role: {
     type: String,
     enum: ['user', 'admin'],
     default: 'user',
   },
-  password: {
-    type: String,
-    required: true,
-  },
+  password: String,
 });
 
 export default mongoose.model<User>('User', userSchema);

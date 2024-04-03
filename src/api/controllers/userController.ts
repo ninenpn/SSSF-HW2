@@ -5,13 +5,12 @@
 // - userPutCurrent - update current user
 // - userDeleteCurrent - delete current user
 // - checkToken - check if current user token is valid: return data from res.locals.user as UserOutput. No need for database query
-import bcrypt from 'bcryptjs';
 import {Request, Response, NextFunction} from 'express';
 import {User, UserOutput} from '../../types/DBTypes';
 import CustomError from '../../classes/CustomError';
 import userModel from '../models/userModel';
-
-const salt = bcrypt.genSaltSync(12);
+import {MessageResponse} from '../../types/MessageTypes';
+import {hashSync} from 'bcryptjs';
 
 const userGet = async (
   req: Request<{id: string}>,
@@ -47,29 +46,24 @@ const userListGet = async (
 
 const userPost = async (
   req: Request<{}, {}, User>,
-  res: Response,
+  res: Response<MessageResponse & {data: Omit<User, 'password' | 'role'>}>,
   next: NextFunction
 ) => {
   try {
-    if (!req.body.role) {
-      req.body.role = 'user';
-    }
-    console.log(req.body.role + 'User role in user post');
-    const userInput = {
-      user_name: req.body.user_name,
-      email: req.body.email,
-      password: bcrypt.hashSync(req.body.password, salt),
-      role: req.body.role,
+    const {user_name, email} = req.body;
+    const password = hashSync(req.body.password, 10);
+    const user = {
+      user_name,
+      email,
+      password,
     };
-
-    const user = await userModel.create(userInput);
-    const outUser: UserOutput = {
-      _id: user._id,
-      user_name: user.user_name,
-      email: user.email,
+    const response = await userModel.create(user);
+    const outUser = {
+      user_name: response.user_name,
+      email: response.email,
+      _id: response._id,
     };
-    console.log(outUser);
-    res.status(200).json({message: 'User created', user: outUser});
+    res.json({message: 'User created', data: outUser});
   } catch (error) {
     next(error);
   }
@@ -96,24 +90,25 @@ const userPutCurrent = async (
 };
 
 const userDeleteCurrent = async (
-  req: Request,
+  req: Request<{}, {}, User>,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    const user = (await userModel.findByIdAndDelete(
-      res.locals.user._id
-    )) as unknown as User;
-    if (!user) {
-      throw new CustomError('User not found', 404);
+    if (!res.locals.user) {
+      throw new CustomError('No user', 400);
     }
 
-    const userOutput: UserOutput = {
-      _id: user._id,
-      user_name: user.user_name,
-      email: user.email,
+    const response = await userModel.findByIdAndDelete(res.locals.user._id);
+    if (!response) {
+      throw new CustomError('No user found', 400);
+    }
+    const outUser = {
+      _id: response._id,
+      user_name: response.user_name,
+      email: response.email,
     };
-    res.json({message: 'User deleted', user: userOutput});
+    res.json({message: 'User deleted', data: outUser});
   } catch (error) {
     next(error);
   }

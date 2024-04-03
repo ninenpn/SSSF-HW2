@@ -8,18 +8,19 @@ import {
   userPutCurrent,
 } from '../controllers/userController';
 import {authenticate} from '../../middlewares';
+import {body, param} from 'express-validator';
 
 const router = express.Router();
 
 router
   .route('/')
   .get(userListGet)
-  .post(userPost)
+  .post(body('email').isEmail(), userPost)
   .put(authenticate, userPutCurrent)
   .delete(authenticate, userDeleteCurrent);
 
 router.get('/token', authenticate, checkToken);
 
-router.route('/:id').get(userGet);
+router.route('/:id').get(param('id'), userGet);
 
 export default router;
